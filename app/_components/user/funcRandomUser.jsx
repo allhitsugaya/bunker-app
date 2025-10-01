@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import ScenariosGrid from '@/app/_components/user/ScenariosGrid';
 
-// безопасный fetch JSON (не падает на HTML-ответах 500 и пробрасывает статус)
+// --- безопасный fetch JSON ---
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
   const ct = res.headers.get('content-type') || '';
@@ -63,9 +63,7 @@ export default function BunkerClient() {
 
   const getOpenedKeys = (p) => ALL_KEYS.filter(k => p[k] !== undefined && p[k] !== null);
 
-  const isAdmin = Boolean(adminKey);
-
-  // init
+  // init: подхватываем playerId из localStorage
   useEffect(() => {
     const pid = localStorage.getItem('playerId');
     if (pid) setPlayerId(pid);
@@ -86,13 +84,22 @@ export default function BunkerClient() {
     await load();
   };
 
-  // load state (с обработкой 401/404/500)
+  // ---- load state (не шлём запрос, пока не готовы) ----
   const load = async () => {
     setAdminError('');
+
+    const isAdminReq = adminMode && !!adminKey;
+    if (!playerId && !isAdminReq) {
+      // ничего не делаем, пока нет playerId и не вошли как ведущий
+      setPlayers([]);
+      setMe(null);
+      return;
+    }
+
     const headers = {};
     let url = '/api/state';
     if (playerId) url += `?playerId=${playerId}`;
-    if (adminMode && adminKey) headers['x-admin-key'] = adminKey;
+    if (isAdminReq) headers['x-admin-key'] = adminKey;
 
     try {
       const data = await fetchJSON(url, { headers });
@@ -105,13 +112,19 @@ export default function BunkerClient() {
         setMe(null);
         return;
       }
-      if (e.status === 404 || String(e.message).includes('player not found')) {
-        // playerId устарел (база чистая на проде)
+      if (e.status === 404) {
+        // playerId устарел/не найден (новый инстанс на Vercel)
         localStorage.removeItem('playerId');
         setPlayerId(null);
-        setMe(null);
         setPlayers([]);
-        alert('Твой прежний игрок не найден (сервер перезапущен). Создай нового персонажа.');
+        setMe(null);
+        alert('Твой прежний игрок не найден. Создай нового персонажа.');
+        return;
+      }
+      if (e.status === 400) {
+        // сервер сказал "playerId required" — просто ждём join
+        setPlayers([]);
+        setMe(null);
         return;
       }
       console.error('load() failed:', e);
@@ -138,7 +151,7 @@ export default function BunkerClient() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerId, fields })
     }).catch(() => {
-    }); // сервер может вернуть 200/204
+    });
     await load();
   };
 
@@ -166,7 +179,7 @@ export default function BunkerClient() {
     await load();
   };
 
-  // admin exclude/return
+  // admin: exclude/return
   const toggleExclude = async (targetId) => {
     if (!adminKey) return alert('Введи ключ ведущего');
     await fetchJSON('/api/admin/exclude', {
@@ -178,14 +191,15 @@ export default function BunkerClient() {
     await load();
   };
 
-  // polling
+  // polling — только если есть playerId или включён режим ведущего
   useEffect(() => {
+    const ready = playerId || (adminMode && adminKey);
+    if (!ready) return;
     load();
     const t = setInterval(load, 2500);
     return () => clearInterval(t);
   }, [playerId, adminMode, adminKey]);
 
-  // checkbox
   const Field = ({ k, label }) => (
     <label className="flex items-center gap-2">
       <input
@@ -347,6 +361,8 @@ export default function BunkerClient() {
           </div>
         </div>
       </div>
+
+      {/* карточки сценариев на главной */}
       <ScenariosGrid />
     </div>
   );
