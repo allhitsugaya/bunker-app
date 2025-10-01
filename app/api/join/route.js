@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { generateUser } from '../../utils/generateUser';
+import { generateUser } from '@/app/utils/generateUser';
 import { dbApi } from '@/app/_data/lib/db';
+
+export const runtime = 'nodejs';
 
 export async function POST(req) {
   const body = await req.json().catch(() => ({}));
