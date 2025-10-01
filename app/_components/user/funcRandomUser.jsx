@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import ScenariosGrid from '@/app/_components/user/ScenariosGrid';
 
 export default function BunkerClient() {
   const [playerId, setPlayerId] = useState(null);
@@ -308,6 +309,7 @@ export default function BunkerClient() {
           </div>
         </div>
       </div>
+      <ScenariosGrid />
     </div>
   );
 }
