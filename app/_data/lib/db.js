@@ -3,15 +3,10 @@ import Database from 'better-sqlite3';
 
 export const runtime = 'nodejs';
 
-/**
- * Путь к БД:
- * - в DEV:  ./bunker.db  (персистентно у тебя локально)
- * - в PROD: /tmp/bunker.db (эпемерное хранилище на серверлесс; при холодном старте может пропасть)
- * Можно переопределить через ENV: DB_FILE
- */
 const DB_PATH =
   process.env.DB_FILE
   || (process.env.NODE_ENV === 'production' ? '/tmp/bunker.db' : 'bunker.db');
+
 
 /** ——————————————————————  INTERNAL: open + migrate  —————————————————————— */
 
@@ -171,5 +166,9 @@ export const dbApi = {
   /** Исключить/вернуть игрока */
   setExcluded(playerId, val) {
     conn.prepare(`UPDATE players SET excluded=? WHERE id=?`).run(val ? 1 : 0, playerId);
+  },
+  deletePlayer(playerId) {
+    conn.prepare(`DELETE FROM players WHERE id=?`).run(playerId);
   }
+
 };
