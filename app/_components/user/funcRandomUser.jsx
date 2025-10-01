@@ -2,6 +2,25 @@
 import { useEffect, useState } from 'react';
 import ScenariosGrid from '@/app/_components/user/ScenariosGrid';
 
+// безопасный fetch JSON (не падает на HTML-ответах 500 и пробрасывает статус)
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    const text = await res.text().catch(() => '');
+    const err = new Error(`HTTP ${res.status}: ${text.slice(0, 160)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  if (!res.ok) {
+    const err = new Error(data?.error || data?.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
 export default function BunkerClient() {
   const [playerId, setPlayerId] = useState(null);
   const [players, setPlayers] = useState([]);
@@ -55,11 +74,11 @@ export default function BunkerClient() {
   // join/create
   const join = async () => {
     const name = prompt('Имя игрока?') || 'Игрок';
-    const res = await fetch('/api/join', {
+    const res = await fetchJSON('/api/join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, playerId })
-    }).then(r => r.json());
+    });
     if (res.playerId) {
       localStorage.setItem('playerId', res.playerId);
       setPlayerId(res.playerId);
@@ -67,7 +86,7 @@ export default function BunkerClient() {
     await load();
   };
 
-  // load state
+  // load state (с обработкой 401/404/500)
   const load = async () => {
     setAdminError('');
     const headers = {};
@@ -75,16 +94,31 @@ export default function BunkerClient() {
     if (playerId) url += `?playerId=${playerId}`;
     if (adminMode && adminKey) headers['x-admin-key'] = adminKey;
 
-    const res = await fetch(url, { headers });
-    if (res.status === 401) {
-      setAdminError('Неверный ключ ведущего');
+    try {
+      const data = await fetchJSON(url, { headers });
+      setPlayers(data.players || []);
+      setMe(data.me || null);
+    } catch (e) {
+      if (e.status === 401) {
+        setAdminError('Неверный ключ ведущего');
+        setPlayers([]);
+        setMe(null);
+        return;
+      }
+      if (e.status === 404 || String(e.message).includes('player not found')) {
+        // playerId устарел (база чистая на проде)
+        localStorage.removeItem('playerId');
+        setPlayerId(null);
+        setMe(null);
+        setPlayers([]);
+        alert('Твой прежний игрок не найден (сервер перезапущен). Создай нового персонажа.');
+        return;
+      }
+      console.error('load() failed:', e);
+      setAdminError('Ошибка загрузки состояния');
       setPlayers([]);
       setMe(null);
-      return;
     }
-    const data = await res.json();
-    setPlayers(data.players || []);
-    setMe(data.me || null);
   };
 
   // admin key
@@ -99,20 +133,22 @@ export default function BunkerClient() {
   const revealSelf = async () => {
     if (!playerId) return alert('Сначала войдите / создайте персонажа');
     const fields = Object.entries(mask).filter(([, v]) => v).map(([k]) => k);
-    await fetch('/api/reveal-self', {
+    await fetchJSON('/api/reveal-self', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerId, fields })
-    });
+    }).catch(() => {
+    }); // сервер может вернуть 200/204
     await load();
   };
 
   const hideSelf = async () => {
     if (!playerId) return;
-    await fetch('/api/hide-self', {
+    await fetchJSON('/api/hide-self', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerId })
+    }).catch(() => {
     });
     await load();
   };
@@ -121,10 +157,11 @@ export default function BunkerClient() {
   const regenerate = async () => {
     if (!playerId) return;
     const name = prompt('Новое имя? (enter — оставить прежнее)') || undefined;
-    await fetch('/api/regenerate', {
+    await fetchJSON('/api/regenerate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerId, name })
+    }).catch(() => {
     });
     await load();
   };
@@ -132,10 +169,11 @@ export default function BunkerClient() {
   // admin exclude/return
   const toggleExclude = async (targetId) => {
     if (!adminKey) return alert('Введи ключ ведущего');
-    await fetch('/api/admin/exclude', {
+    await fetchJSON('/api/admin/exclude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
       body: JSON.stringify({ targetId })
+    }).catch(() => {
     });
     await load();
   };
@@ -290,7 +328,7 @@ export default function BunkerClient() {
                   {opened.length === 0 ? (
                     <div className="text-gray-400 text-sm">Ничего не открыто.</div>
                   ) : (
-                    <div className="max-h-48 overflow-y-auto pr-1 scrollbar">
+                    <div className="max-h-48 overflow-y-auto pr-1">
                       <div className="flex flex-wrap gap-2">
                         {opened.map(k => (
                           <span
