@@ -9,7 +9,12 @@ const isAdmin = (req) => {
 };
 
 export async function POST(req) {
-  if (!isAdmin(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  await dbApi.wipe();
-  return NextResponse.json({ ok: true });
+  try {
+    if (!isAdmin(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    await dbApi.wipe();
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('[admin/wipe.POST] 500:', e);
+    return NextResponse.json({ error: 'internal' }, { status: 500 });
+  }
 }

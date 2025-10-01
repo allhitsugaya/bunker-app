@@ -9,10 +9,15 @@ const isAdmin = (req) => {
 };
 
 export async function POST(req) {
-  if (!isAdmin(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  const { targetId } = await req.json().catch(() => ({}));
-  if (!targetId) return NextResponse.json({ error: 'targetId required' }, { status: 400 });
+  try {
+    if (!isAdmin(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    const { targetId } = await req.json().catch(() => ({}));
+    if (!targetId) return NextResponse.json({ error: 'targetId required' }, { status: 400 });
 
-  await dbApi.deletePlayer(targetId);
-  return NextResponse.json({ ok: true, targetId });
+    await dbApi.deletePlayer(targetId); // если нет — см. реализацию ниже
+    return NextResponse.json({ ok: true, targetId });
+  } catch (e) {
+    console.error('[admin/delete-player.POST] 500:', e);
+    return NextResponse.json({ error: 'internal' }, { status: 500 });
+  }
 }

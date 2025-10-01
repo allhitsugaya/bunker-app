@@ -195,5 +195,11 @@ export const dbApi = {
   async wipe() {
     const db = await getDb();
     await db.collection('players').deleteMany({});
+  },
+  // в dbApi
+  async deletePlayer(playerId) {
+    const db = await getDb();
+    await db.collection('players').deleteOne({ id: playerId });
   }
+
 };
