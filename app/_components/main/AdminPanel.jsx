@@ -9,16 +9,22 @@ export default function AdminPanel() {
   async function load() {
     if (!adminKey) return;
     setError('');
-    const res = await fetch('/api/state', {
-      headers: { 'x-admin-key': adminKey }
-    });
-    if (res.status === 401) {
-      setError('❌ Неверный ключ ведущего');
+    try {
+      const res = await fetch('/api/state', {
+        headers: { 'x-admin-key': adminKey }
+      });
+      if (!res.ok) {
+        if (res.status === 401) setError('❌ Неверный ключ ведущего');
+        else setError('⚠ Ошибка загрузки игроков');
+        setPlayers([]);
+        return;
+      }
+      const data = await res.json();
+      setPlayers(data.players || []);
+    } catch (e) {
+      setError('⚠ Сеть/сервер недоступны');
       setPlayers([]);
-      return;
     }
-    const data = await res.json();
-    setPlayers(data.players || []);
   }
 
   useEffect(() => {
@@ -49,12 +55,38 @@ export default function AdminPanel() {
     load();
   }
 
+  // Полное удаление пользователя
+  async function deletePlayer(id) {
+    if (!confirm('Удалить игрока безвозвратно?')) return;
+    await fetch('/api/admin/delete-player', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-key': adminKey
+      },
+      body: JSON.stringify({ targetId: id })
+    });
+    load();
+  }
+
+  // Сброс всей игры
+  async function wipeAll() {
+    if (!confirm('⚠ Стереть ВСЕХ игроков и начать заново?')) return;
+    await fetch('/api/admin/wipe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-key': adminKey
+      }
+    });
+    load();
+  }
+
   return (
     <div className="min-h-screen bg-gray-950 text-green-300 p-6 font-mono">
       <div className="max-w-5xl mx-auto space-y-6">
         <h1 className="text-2xl font-bold text-green-400">🧠 Панель ведущего</h1>
 
-        {/* Ввод ключа */}
         <div className="flex flex-wrap gap-2 items-center">
           <input
             type="password"
@@ -69,24 +101,27 @@ export default function AdminPanel() {
           >
             🔑 Загрузить игроков
           </button>
+          <button
+            onClick={wipeAll}
+            className="px-4 py-2 bg-red-600 text-white font-bold rounded hover:bg-red-500"
+          >
+            🧨 Пересоздать игру (wipe)
+          </button>
         </div>
 
         {error && <p className="text-red-400">{error}</p>}
 
-        {/* Список игроков */}
         <div className="grid gap-3">
           {players.map((p) => (
             <div
               key={p.id}
               className={`p-4 rounded-xl border ${
-                p.excluded
-                  ? 'border-red-600 bg-gray-900/70'
-                  : 'border-green-700 bg-gray-900'
+                p.excluded ? 'border-red-600 bg-gray-900/70' : 'border-green-700 bg-gray-900'
               } shadow-lg`}
             >
               <div className="flex justify-between items-center">
                 <h2 className="text-lg font-bold text-green-400">
-                  {p.name} • {p.age ?? '?'} {p.excluded ? '🛑 ИСКЛЮЧЁН' : ''}
+                  {p.name} • {p.age ?? '—'} {p.excluded ? '🛑 ИСКЛЮЧЁН' : ''}
                 </h2>
 
                 <div className="flex gap-2">
@@ -99,63 +134,40 @@ export default function AdminPanel() {
                   <button
                     onClick={() => toggleExclude(p.id)}
                     className={`px-3 py-1 rounded font-bold ${
-                      p.excluded
-                        ? 'bg-yellow-400 text-black'
-                        : 'bg-red-600 text-white'
+                      p.excluded ? 'bg-yellow-400 text-black' : 'bg-red-600 text-white'
                     }`}
                   >
                     {p.excluded ? 'Вернуть' : 'Исключить'}
                   </button>
+                  <button
+                    onClick={() => deletePlayer(p.id)}
+                    className="px-3 py-1 rounded font-bold bg-red-700 text-white hover:bg-red-600"
+                  >
+                    Удалить
+                  </button>
                 </div>
               </div>
 
-              {/* Детали игрока */}
               <div className="mt-2 grid md:grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <div>Профессия: {p.profession}</div>
-                <div>Здоровье: {p.health}</div>
-                <div>Психика: {p.psychology}</div>
-                <div>Предмет: {p.item}</div>
-                <div>Хобби: {p.hobby}</div>
-                <div>Страх: {p.fear}</div>
-                <div>Секрет: {p.secret}</div>
-                <div>Отношение: {p.relationship}</div>
-                <div>Черта: {p.trait}</div>
-                <div>Способность: {p.ability}</div>
+                <div>Профессия: {p.profession ?? '—'}</div>
+                <div>Здоровье: {p.health ?? '—'}</div>
+                <div>Психика: {p.psychology ?? '—'}</div>
+                <div>Предмет: {p.item ?? '—'}</div>
+                <div>Хобби: {p.hobby ?? '—'}</div>
+                <div>Страх: {p.fear ?? '—'}</div>
+                <div>Секрет: {p.secret ?? '—'}</div>
+                <div>Отношение: {p.relationship ?? '—'}</div>
+                <div>Черта: {p.trait ?? '—'}</div>
+                <div>Способность: {p.ability ?? '—'}</div>
               </div>
             </div>
           ))}
 
           {players.length === 0 && !error && (
-            <div className="text-gray-500">
-              Нет данных. Введите ключ и нажмите “Загрузить игроков”.
-            </div>
+            <div className="text-gray-500">Нет данных. Введите ключ и нажмите “Загрузить игроков”.</div>
           )}
         </div>
       </div>
-      {adminMode && adminKey && (
-        <button
-          onClick={async () => {
-            if (!confirm('Пересоздать игру? Это удалит всех игроков безвозвратно.')) return;
-            const res = await fetch('/api/admin/reset', { method: 'POST', headers: { 'x-admin-key': adminKey } });
-            if (res.ok) {
-              localStorage.removeItem('playerId');
-              // очистим локальный стейт
-              setPlayers([]);
-              setMe(null);
-              await load();
-              alert('Игра пересоздана. База очищена.');
-            } else if (res.status === 401) {
-              alert('Неверный ключ ведущего');
-            } else {
-              alert('Ошибка сброса');
-            }
-          }}
-          className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-500"
-        >
-          🔥 Пересоздать игру
-        </button>
-      )}
-
     </div>
   );
 }
