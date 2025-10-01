@@ -1,174 +1,199 @@
-// app/lib/db.js
-import Database from 'better-sqlite3';
+// app/_data/lib/db.js
+import { MongoClient } from 'mongodb';
 
 export const runtime = 'nodejs';
 
-const DB_PATH =
-  process.env.DB_FILE
-  || (process.env.NODE_ENV === 'production' ? '/tmp/bunker.db' : 'bunker.db');
+// === Конфиг через .env ===
+// MONGODB_URI="mongodb+srv://<user>:<pass>@<cluster>/?retryWrites=true&w=majority&appName=<AppName>"
+// MONGODB_DB="bunker"   // можно не указывать, возьмём "bunker" по умолчанию
+const uri = process.env.MONGODB_URI;
+if (!uri) {
+  console.error('❌ Missing MONGODB_URI in env');
+}
+const dbName = process.env.MONGODB_DB || 'bunker';
 
+// Кэшируем клиент межгорячими перезагрузками в деве
+let _client = global._bunkerMongoClient || null;
+let _db = global._bunkerMongoDb || null;
 
-/** ——————————————————————  INTERNAL: open + migrate  —————————————————————— */
-
-function ensureColumns(db, table, needed) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-  const existing = new Set(cols.map(c => c.name));
-  for (const { name, ddl } of needed) {
-    if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+async function getDb() {
+  if (_db) return _db;
+  if (!_client) {
+    _client = new MongoClient(uri, {
+      // таймауты и хорошая практика для serverless
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      serverSelectionTimeoutMS: 8000
+    });
+    global._bunkerMongoClient = _client;
   }
+  if (!_client.topology?.isConnected()) {
+    await _client.connect();
+  }
+  _db = _client.db(dbName);
+  global._bunkerMongoDb = _db;
+
+  // индексы (однократно)
+  const players = _db.collection('players');
+  await players.createIndex({ createdAt: 1 });
+  await players.createIndex({ excluded: 1 });
+  await players.createIndex({ revealed: 1 });
+
+  return _db;
 }
-
-function openAndMigrate() {
-  const db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS players (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      age INTEGER,
-      profession TEXT,
-      health TEXT,
-      psychology TEXT,
-      item TEXT,
-      hobby TEXT,
-      fear TEXT,
-      secret TEXT,
-      relationship TEXT,
-      trait TEXT,
-      ability TEXT,
-      revealed INTEGER DEFAULT 0,
-      createdAt TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_players_created ON players(createdAt);
-  `);
-
-  // Миграции новых колонок без try/catch — только если их реально нет
-  ensureColumns(db, 'players', [
-    { name: 'public', ddl: 'public TEXT' },
-    { name: 'excluded', ddl: 'excluded INTEGER DEFAULT 0' }
-  ]);
-
-  return db;
-}
-
-// singleton
-let conn = globalThis._bunkerConn;
-if (!conn) {
-  conn = globalThis._bunkerConn = openAndMigrate();
-}
-
-/** ——————————————————————  HELPERS  —————————————————————— */
 
 const cuid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-function safeParseJSON(str) {
-  if (!str) return null;
-  try {
-    return JSON.parse(str);
-  } catch {
-    return null;
-  }
-}
-
-/** ——————————————————————  PUBLIC API  —————————————————————— */
+/**
+ * Структура документа в коллекции "players":
+ * {
+ *   _id: <mongo ObjectId>,  // не используем наружу
+ *   id: string,             // наш внешний ID (playerId)
+ *   name: string,
+ *   age: number,
+ *   profession, health, psychology, item, hobby, fear,
+ *   secret, relationship, trait, ability: string | null,
+ *   revealed: number (0|1),
+ *   public: object|null,    // {"age": 22, "profession": "..."} — что открыть публично
+ *   excluded: number (0|1),
+ *   createdAt: ISO string
+ * }
+ */
 
 export const dbApi = {
-  /**
-   * Создать нового игрока.
-   * data — объект со всеми полями (name, age, profession, ...).
-   * Возвращает { id }
-   */
-  createPlayer(data) {
+  async createPlayer(data) {
+    const db = await getDb();
+    const players = db.collection('players');
     const id = cuid();
-    const createdAt = new Date().toISOString();
-    conn.prepare(`
-      INSERT INTO players (
-        id, name, age, profession, health, psychology, item, hobby, fear, secret,
-        relationship, trait, ability, revealed, public, excluded, createdAt
-      ) VALUES (
-        @id, @name, @age, @profession, @health, @psychology, @item, @hobby, @fear, @secret,
-        @relationship, @trait, @ability, 0, NULL, 0, @createdAt
-      )
-    `).run({ id, createdAt, ...data });
+    const doc = {
+      id,
+      name: data.name || 'Игрок',
+      age: data.age ?? null,
+      profession: data.profession ?? null,
+      health: data.health ?? null,
+      psychology: data.psychology ?? null,
+      item: data.item ?? null,
+      hobby: data.hobby ?? null,
+      fear: data.fear ?? null,
+      secret: data.secret ?? null,
+      relationship: data.relationship ?? null,
+      trait: data.trait ?? null,
+      ability: data.ability ?? null,
+      revealed: 0,
+      public: null,
+      excluded: 0,
+      createdAt: new Date().toISOString()
+    };
+    await players.insertOne(doc);
     return { id };
   },
 
-  /** Получить игрока полностью (все поля, в том числе скрытые) */
-  getPlayer(id) {
-    return conn.prepare(`SELECT * FROM players WHERE id=?`).get(id);
+  async getPlayer(id) {
+    const db = await getDb();
+    return db.collection('players').findOne({ id }, { projection: { _id: 0 } });
   },
 
-  /** Ведущему — список всех игроков (включая исключённых) */
-  listAll() {
-    return conn.prepare(`SELECT * FROM players ORDER BY createdAt ASC`).all();
+  // ведущий видит всех
+  async listAll() {
+    const db = await getDb();
+    return db
+      .collection('players')
+      .find({}, { projection: { _id: 0 } })
+      .sort({ createdAt: 1 })
+      .toArray();
   },
 
-  /**
-   * Публичный список для всех (только не исключённые).
-   * Возвращает: { id, name, ...publicFields }
-   */
-  listPublic() {
-    const rows = conn.prepare(
-      `SELECT id, name, public, excluded FROM players WHERE excluded=0 ORDER BY createdAt ASC`
-    ).all();
+  // публичные представления для всех не исключённых
+  async listPublic() {
+    const db = await getDb();
+    const rows = await db
+      .collection('players')
+      .find({ excluded: 0 }, { projection: { _id: 0, id: 1, name: 1, public: 1 } })
+      .sort({ createdAt: 1 })
+      .toArray();
+
     return rows.map(r => {
-      const pub = safeParseJSON(r.public);
-      return pub ? { id: r.id, name: r.name, ...pub } : { id: r.id, name: r.name };
+      if (!r.public) return { id: r.id, name: r.name };
+      return { id: r.id, name: r.name, ...r.public };
     });
   },
 
-  /** Старый “массовый” флаг, если вдруг используешь */
-  listRevealed() {
-    return conn.prepare(`
-      SELECT * FROM players
-      WHERE revealed=1 AND excluded=0
-      ORDER BY createdAt ASC
-    `).all();
+  async listRevealed() {
+    const db = await getDb();
+    return db
+      .collection('players')
+      .find({ revealed: 1, excluded: 0 }, { projection: { _id: 0 } })
+      .sort({ createdAt: 1 })
+      .toArray();
   },
 
-  /** Переключить флаг revealed (или выставить явно) */
-  toggleReveal(targetId, value) {
-    const explicit = value === undefined ? null : value ? 1 : 0;
-    if (explicit === null) {
-      const row = conn.prepare(`SELECT revealed FROM players WHERE id=?`).get(targetId);
+  async toggleReveal(targetId, value) {
+    const db = await getDb();
+    const players = db.collection('players');
+    if (value === undefined) {
+      const row = await players.findOne({ id: targetId }, { projection: { revealed: 1 } });
       const next = row?.revealed ? 0 : 1;
-      conn.prepare(`UPDATE players SET revealed=? WHERE id=?`).run(next, targetId);
+      await players.updateOne({ id: targetId }, { $set: { revealed: next } });
       return !!next;
     } else {
-      conn.prepare(`UPDATE players SET revealed=? WHERE id=?`).run(explicit, targetId);
+      const explicit = value ? 1 : 0;
+      await players.updateOne({ id: targetId }, { $set: { revealed: explicit } });
       return !!explicit;
     }
   },
 
-  /** Самораскрытие (публичные поля) */
-  setPublic(playerId, obj) {
-    const payload = obj ? JSON.stringify(obj) : null;
-    conn.prepare(`UPDATE players SET public=? WHERE id=?`).run(payload, playerId);
+  // самораскрытие
+  async setPublic(playerId, obj) {
+    const db = await getDb();
+    await db.collection('players').updateOne(
+      { id: playerId },
+      { $set: { public: obj || null } }
+    );
   },
 
-  clearPublic(playerId) {
-    conn.prepare(`UPDATE players SET public=NULL WHERE id=?`).run(playerId);
+  async clearPublic(playerId) {
+    const db = await getDb();
+    await db.collection('players').updateOne(
+      { id: playerId },
+      { $set: { public: null } }
+    );
   },
 
-  /** Пересоздать статы (обновить все поля у существующего id) */
-  updatePlayer(playerId, data) {
-    conn.prepare(`
-      UPDATE players SET
-        name=@name, age=@age, profession=@profession, health=@health, psychology=@psychology,
-        item=@item, hobby=@hobby, fear=@fear, secret=@secret, relationship=@relationship,
-        trait=@trait, ability=@ability
-      WHERE id=@id
-    `).run({ id: playerId, ...data });
+  // пересоздать персонажа (новые случайные поля, тот же id)
+  async updatePlayer(playerId, data) {
+    const db = await getDb();
+    await db.collection('players').updateOne(
+      { id: playerId },
+      {
+        $set: {
+          name: data.name,
+          age: data.age,
+          profession: data.profession,
+          health: data.health,
+          psychology: data.psychology,
+          item: data.item,
+          hobby: data.hobby,
+          fear: data.fear,
+          secret: data.secret,
+          relationship: data.relationship,
+          trait: data.trait,
+          ability: data.ability
+        }
+      }
+    );
   },
 
-  /** Исключить/вернуть игрока */
-  setExcluded(playerId, val) {
-    conn.prepare(`UPDATE players SET excluded=? WHERE id=?`).run(val ? 1 : 0, playerId);
+  async setExcluded(playerId, val) {
+    const db = await getDb();
+    await db.collection('players').updateOne(
+      { id: playerId },
+      { $set: { excluded: val ? 1 : 0 } }
+    );
   },
-  deletePlayer(playerId) {
-    conn.prepare(`DELETE FROM players WHERE id=?`).run(playerId);
+
+  // Полный сброс
+  async wipe() {
+    const db = await getDb();
+    await db.collection('players').deleteMany({});
   }
-
 };

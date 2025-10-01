@@ -4,48 +4,46 @@ import { dbApi } from '@/app/_data/lib/db';
 
 export const runtime = 'nodejs';
 
-const ADMIN_DEFAULT_KEY = '1234serega';
-const getAdminKey = (req) => req.headers.get('x-admin-key') || '';
-const isAdminKeyValid = (k) => !!k && k === (process.env.ADMIN_KEY || ADMIN_DEFAULT_KEY);
+const adminHeader = (req) => req.headers.get('x-admin-key') || '';
+const isAdmin = (key) =>
+  key === '1234serega' || (process.env.ADMIN_KEY && key === process.env.ADMIN_KEY);
 
-const json = (data, status = 200) =>
-  new NextResponse(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }
-  });
+const json = (data, init) => NextResponse.json(data, init);
 
+// Своё публичное представление (что видят другие)
 const toPublic = (row) => {
-  if (!row?.public) return { id: row.id, name: row.name };
-  try {
-    return { id: row.id, name: row.name, ...JSON.parse(row.public) };
-  } catch {
-    return { id: row.id, name: row.name };
-  }
+  if (!row) return null;
+  return row.public ? { id: row.id, name: row.name, ...row.public } : { id: row.id, name: row.name };
 };
 
 export async function GET(req) {
   try {
-    const key = getAdminKey(req);
+    const key = adminHeader(req);
     const url = new URL(req.url);
-    const playerId = url.searchParams.get('playerId') || '';
+    const playerId = url.searchParams.get('playerId');
 
+    // --- Ведущий ---
     if (key) {
-      if (!isAdminKeyValid(key)) return json({ error: 'unauthorized' }, 401);
-      const players = dbApi.listAll();
-      return json({ admin: true, players, me: null });
+      if (!isAdmin(key)) return json({ error: 'unauthorized' }, { status: 401 });
+      const all = await dbApi.listAll();                 // <— await
+      return json({ admin: true, players: all });
     }
 
-    if (!playerId) return json({ error: 'playerId required' }, 400);
+    // --- Игрок ---
+    if (!playerId) return json({ error: 'playerId required' }, { status: 400 });
 
-    const meFull = dbApi.getPlayer(playerId);
-    if (!meFull) return json({ error: 'player not found' }, 404);
-    if (meFull.excluded) return json({ admin: false, players: [], me: meFull });
+    const meFull = await dbApi.getPlayer(playerId);      // <— await
+    if (!meFull || meFull.excluded) {
+      return json({ admin: false, players: [] }, { status: 404 });
+    }
 
     const myPublic = toPublic(meFull);
-    const others = dbApi.listPublic().filter(p => p.id !== playerId);
+    const others = (await dbApi.listPublic())            // <— await
+      .filter((p) => p.id !== playerId);
+
     return json({ admin: false, players: [myPublic, ...others], me: meFull });
   } catch (e) {
     console.error('[state.GET] 500:', e);
-    return json({ error: 'internal_error', message: String(e?.message || e) }, 500);
+    return json({ error: 'internal' }, { status: 500 });
   }
 }

@@ -132,6 +132,30 @@ export default function AdminPanel() {
           )}
         </div>
       </div>
+      {adminMode && adminKey && (
+        <button
+          onClick={async () => {
+            if (!confirm('Пересоздать игру? Это удалит всех игроков безвозвратно.')) return;
+            const res = await fetch('/api/admin/reset', { method: 'POST', headers: { 'x-admin-key': adminKey } });
+            if (res.ok) {
+              localStorage.removeItem('playerId');
+              // очистим локальный стейт
+              setPlayers([]);
+              setMe(null);
+              await load();
+              alert('Игра пересоздана. База очищена.');
+            } else if (res.status === 401) {
+              alert('Неверный ключ ведущего');
+            } else {
+              alert('Ошибка сброса');
+            }
+          }}
+          className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+        >
+          🔥 Пересоздать игру
+        </button>
+      )}
+
     </div>
   );
 }
