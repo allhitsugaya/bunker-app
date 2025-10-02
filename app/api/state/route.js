@@ -1,58 +1,66 @@
+// app/api/state/route.js
 import { NextResponse } from 'next/server';
 import { dbApi } from '@/app/_data/lib/db';
 
 export const runtime = 'nodejs';
-
+const json = (d, i) => NextResponse.json(d, i);
 const adminHeader = (req) => req.headers.get('x-admin-key') || '';
-const isAdmin = (key) => key === '1234serega'; // дефолтный ключ ведущего
+const isAdmin = (k) => k === (process.env.ADMIN_KEY || '1234serega');
+
+const toPublic = (row) => {
+  if (!row) return null;
+  if (!row.public) return { id: row.id, name: row.name };
+  return { id: row.id, name: row.name, ...row.public };
+};
 
 export async function GET(req) {
-  const key = adminHeader(req);
-  const url = new URL(req.url);
-  const playerId = url.searchParams.get('playerId');
+  try {
+    const key = adminHeader(req);
+    const url = new URL(req.url);
+    const playerId = url.searchParams.get('playerId');
 
-  // --- 1. Ведущий ---
-  if (key) {
-    if (!isAdmin(key)) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    // ведущий
+    if (key) {
+      if (!isAdmin(key)) return json({ error: 'unauthorized' }, { status: 401 });
+      const all = await dbApi.listAll();
+      return json({ admin: true, players: all });
     }
-    const all = dbApi.listAll(); // ведущий видит всех
-    return NextResponse.json({ admin: true, players: all });
+
+    // игрок
+    if (!playerId) return json({ error: 'playerId required' }, { status: 400 });
+
+    const meFull = await dbApi.getPlayer(playerId);
+    if (!meFull || meFull.excluded) return json({ admin: false, players: [] });
+
+    const myPublic = toPublic(meFull);
+    const othersPublic = await dbApi.listPublic();
+    const others = othersPublic.filter((p) => p.id !== playerId);
+
+    return json({ admin: false, players: [myPublic, ...others], me: meFull });
+  } catch (e) {
+    console.error('[state.GET] 500:', e);
+    return json({ error: 'internal' }, { status: 500 });
   }
+}
 
-  // --- 2. Игрок ---
-  if (!playerId) {
-    return NextResponse.json({ error: 'playerId required' }, { status: 400 });
+export async function POST(req) {
+  try {
+    const key = adminHeader(req);
+    if (!isAdmin(key)) return json({ error: 'unauthorized' }, { status: 401 });
+
+    const { targetId, state } = await req.json().catch(() => ({}));
+    if (!targetId) return json({ error: 'targetId required' }, { status: 400 });
+    if (!state || typeof state !== 'object') return json({ error: 'state required' }, { status: 400 });
+
+    const row = await dbApi.getPlayer(targetId);
+    if (!row) return json({ error: 'not found' }, { status: 404 });
+
+    const nextState = { ...row.state, ...state };
+    await dbApi.setState(targetId, nextState);
+
+    return json({ ok: true, targetId, state: nextState });
+  } catch (e) {
+    console.error('[state.POST] 500:', e);
+    return json({ error: 'internal' }, { status: 500 });
   }
-
-  const meFull = dbApi.getPlayer(playerId);
-  if (!meFull || meFull.excluded) {
-    // если исключён — не видит никого
-    return NextResponse.json({ admin: false, players: [] });
-  }
-
-  // Получаем “публичное” представление себя
-  const myPublic = (() => {
-    const row = meFull;
-    if (!row.public) return { id: row.id, name: row.name };
-    try {
-      const pub = JSON.parse(row.public);
-      return { id: row.id, name: row.name, ...pub };
-    } catch {
-      return { id: row.id, name: row.name };
-    }
-  })();
-
-  // Остальные — только public
-  const publicOthers = dbApi.listPublic().filter((p) => p.id !== playerId);
-
-  // В “players” возвращаем себя (в публичном виде) и остальных
-  const players = [myPublic, ...publicOthers];
-
-  // А в “me” возвращаем полный объект — для локального управления
-  return NextResponse.json({
-    admin: false,
-    players,
-    me: meFull
-  });
 }

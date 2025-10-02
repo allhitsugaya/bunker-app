@@ -11,13 +11,10 @@ const isAdmin = (req) => {
 export async function POST(req) {
   try {
     if (!isAdmin(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    const { targetId, value } = await req.json().catch(() => ({}));
-    if (!targetId) return NextResponse.json({ error: 'targetId required' }, { status: 400 });
-
-    const next = await dbApi.toggleReveal(targetId, value);
-    return NextResponse.json({ targetId, revealed: next });
+    await dbApi.wipe();
+    return NextResponse.json({ ok: true });
   } catch (e) {
-    console.error('[admin/reveal.POST] 500:', e);
+    console.error('[admin/wipe.POST] 500:', e);
     return NextResponse.json({ error: 'internal' }, { status: 500 });
   }
 }
