@@ -50,7 +50,8 @@ export default function RulesForGame() {
             </li>
             <li>
               Ведущий входит с ключом (<span className="text-emerald-400">ADMIN_KEY</span>). По умолчанию —{' '}
-              <span className="px-1 rounded bg-emerald-700/30 border border-emerald-700/60">1234serega</span>
+              <span
+                className="px-1 rounded bg-emerald-700/30 border border-emerald-700/60">который стоит у админа</span>
               (можно изменить в переменных окружения).
             </li>
             <li>
