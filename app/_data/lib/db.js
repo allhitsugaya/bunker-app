@@ -52,6 +52,7 @@ export const dbApi = {
     const doc = {
       id,
       name: data.name || 'Игрок',
+      gender: data.gender ?? null,
       age: data.age ?? null,
       profession: data.profession ?? null,
       health: data.health ?? null,
@@ -138,6 +139,7 @@ export const dbApi = {
       {
         $set: {
           name: data.name,
+          gender: data.gender,
           age: data.age,
           profession: data.profession,
           health: data.health,

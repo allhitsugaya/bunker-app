@@ -7,6 +7,7 @@ export function generateUser(name = 'Игрок') {
   return {
     name,
     age: randAge(),
+    gender: pick(arrBunker.gender),
     profession: pick(arrBunker.profession),
     health: pick(arrBunker.health),
     psychology: pick(arrBunker.psychology),

@@ -32,11 +32,13 @@ export default function BunkerClient() {
   const [adminError, setAdminError] = useState('');
 
   const [mask, setMask] = useState({
+    gender: false,
     age: false, profession: false, health: false, psychology: false, item: false,
     hobby: false, fear: false, secret: false, relationship: false, trait: false, ability: false
   });
 
   const FIELD_LABELS = {
+    gender: 'Пол',
     age: 'Возраст',
     profession: 'Профессия',
     health: 'Здоровье',
