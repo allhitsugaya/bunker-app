@@ -4,8 +4,8 @@ import { dbApi } from '@/app/_data/lib/db';
 
 export const runtime = 'nodejs';
 const json = (d, i) => NextResponse.json(d, i);
-const adminHeader = (req) => req.headers.get('x-admin-key') || '';
-const isAdmin = (k) => k === (process.env.ADMIN_KEY || '1234serega');
+const adminHeader = (req) => (req.headers.get('x-admin-key') || '').trim();
+const isAdmin = (k) => (k || '').trim() === (process.env.ADMIN_KEY || '1234serega');
 
 const toPublic = (row) => {
   if (!row) return null;
@@ -19,7 +19,7 @@ export async function GET(req) {
     const url = new URL(req.url);
     const playerId = url.searchParams.get('playerId');
 
-    // ведущий
+    // админ
     if (key) {
       if (!isAdmin(key)) return json({ error: 'unauthorized' }, { status: 401 });
       const all = await dbApi.listAll();
@@ -43,6 +43,8 @@ export async function GET(req) {
   }
 }
 
+// Либо УДАЛИ этот POST целиком,
+// либо добавь в dbApi метод setState, как показал выше.
 export async function POST(req) {
   try {
     const key = adminHeader(req);

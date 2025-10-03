@@ -4,7 +4,9 @@ import { dbApi } from '@/app/_data/lib/db';
 
 export async function POST(req) {
   const { playerId, targetId } = await req.json().catch(() => ({}));
-  if (!playerId || !targetId) return NextResponse.json({ error: 'playerId/targetId required' }, { status: 400 });
+  if (!playerId || !targetId) {
+    return NextResponse.json({ error: 'playerId/targetId required' }, { status: 400 });
+  }
 
   const active = await dbApi.getActivePoll();
   if (!active) return NextResponse.json({ error: 'no_active_poll' }, { status: 400 });

@@ -10,7 +10,6 @@ async function fetchJSON(url, opts) {
   try {
     data = ct.includes('application/json') ? await res.json() : null;
   } catch {
-    /* noop */
   }
   if (!res.ok) {
     const err = new Error(data?.error || data?.message || `HTTP ${res.status}`);
@@ -23,12 +22,12 @@ async function fetchJSON(url, opts) {
 export default function BunkerClient() {
   // ===== базовое состояние =====
   const [playerId, setPlayerId] = useState(null);
-  const [players, setPlayers] = useState([]);
-  const [me, setMe] = useState(null);
+  const [players, setPlayers] = useState([]);   // публичные, как видят все
+  const [me, setMe] = useState(null);           // полные статы (только для себя)
 
   // admin
   const [adminMode, setAdminMode] = useState(false);
-  const [adminKeyInput, setAdminKeyInput] = useState('1234serega');
+  const [adminKeyInput, setAdminKeyInput] = useState('');
   const [adminKey, setAdminKey] = useState('');
   const [adminError, setAdminError] = useState('');
 
@@ -219,10 +218,18 @@ export default function BunkerClient() {
   // ===== экшены голосования =====
   async function startPoll() {
     if (!adminKey) return alert('Нужен ключ ведущего');
+    // ВАЖНО: отправляем валидный список кандидатов (не исключённых)
+    const candidates = players.filter(p => !p.excluded).map(p => p.id);
+
+    if (candidates.length === 0) {
+      alert('Нет доступных кандидатов для голосования');
+      return;
+    }
+
     await fetchJSON('/api/polls/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-      body: JSON.stringify({ /* можно передать {candidates:[...]} */ })
+      body: JSON.stringify({ candidates })
     });
     await loadPoll();
   }
@@ -242,10 +249,10 @@ export default function BunkerClient() {
     await fetchJSON('/api/polls/close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-      body: JSON.stringify({ policy: 'most' }) // most | threshold и т.п., как реализуешь на API
+      body: JSON.stringify({ policy: 'most' }) // если нужно — поддержи другие политики на бэке
     });
     await loadPoll();
-    await load(); // на случай, если ведущий сразу исключает победителя
+    await load(); // на случай, если после закрытия ведущий кого-то исключит
   }
 
   // ===== отрисовка =====
@@ -263,7 +270,7 @@ export default function BunkerClient() {
   const displayedPlayers = players; // публичные (включая “я” как меня видят другие)
   const visibleCols = getVisibleCols(displayedPlayers);
 
-  // кандидаты голосования — либо с сервера, либо все видимые и не исключённые
+  // кандидаты голосования — строго из poll.candidates (если сервер их прислал), иначе — все не исключённые
   const pollCandidates = useMemo(() => {
     const byId = new Map(displayedPlayers.map((p) => [p.id, p]));
     if (poll?.candidates?.length) {
@@ -274,6 +281,8 @@ export default function BunkerClient() {
     }
     return displayedPlayers.filter((p) => !p.excluded);
   }, [poll, displayedPlayers]);
+
+  const nameById = (id) => displayedPlayers.find(x => x.id === id)?.name || id;
 
   return (
     <div className="min-h-screen bg-gray-950 text-green-300 p-6 font-mono">
@@ -288,21 +297,6 @@ export default function BunkerClient() {
             Пересоздать персонажа
           </button>
 
-          <div className="ml-auto flex items-center gap-2">
-            <input
-              type="password"
-              placeholder="ADMIN_KEY"
-              value={adminKeyInput}
-              onChange={(e) => setAdminKeyInput(e.target.value)}
-              className="px-3 py-2 bg-gray-800 rounded border border-gray-700"
-            />
-            <button
-              onClick={applyAdminKey}
-              className="px-3 py-2 bg-emerald-600 text-black rounded hover:bg-emerald-500"
-            >
-              Войти как ведущий
-            </button>
-          </div>
         </div>
 
         {/* Назад */}
@@ -330,9 +324,6 @@ export default function BunkerClient() {
             <div className="mt-3 flex gap-2">
               <button onClick={revealSelf} className="px-3 py-2 bg-green-500 text-black rounded hover:bg-green-400">
                 Открыть выбранное
-              </button>
-              <button onClick={hideSelf} className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600">
-                Скрыть всё
               </button>
             </div>
 
@@ -501,10 +492,7 @@ export default function BunkerClient() {
                             Голоса: {votes} {totalVotes > 0 && `(${pct}%)`}
                           </div>
                           <div className="mt-1 h-1.5 w-full bg-gray-800 rounded">
-                            <div
-                              className="h-1.5 bg-emerald-500 rounded"
-                              style={{ width: `${pct}%` }}
-                            />
+                            <div className="h-1.5 bg-emerald-500 rounded" style={{ width: `${pct}%` }} />
                           </div>
                         </div>
                       );
@@ -513,7 +501,7 @@ export default function BunkerClient() {
                 )}
                 {myVote && (
                   <div className="mt-3 text-xs text-emerald-300">
-                    Твой голос: <span className="font-semibold">{myVote}</span>
+                    Твой голос: <span className="font-semibold">{nameById(myVote)}</span>
                   </div>
                 )}
               </div>
@@ -523,15 +511,12 @@ export default function BunkerClient() {
                 <div className="text-sm font-semibold text-green-300 mb-2">Сводка</div>
                 <div className="text-sm text-green-200/80">Всего голосов: {totalVotes}</div>
                 <div className="mt-2 grid gap-1 text-xs">
-                  {Object.entries(pollCounts || {}).map(([id, cnt]) => {
-                    const name = displayedPlayers.find((x) => x.id === id)?.name || id;
-                    return (
-                      <div key={id} className="flex justify-between">
-                        <span className="opacity-80">{name}</span>
-                        <span className="font-semibold">{cnt}</span>
-                      </div>
-                    );
-                  })}
+                  {Object.entries(pollCounts || {}).map(([id, cnt]) => (
+                    <div key={id} className="flex justify-between">
+                      <span className="opacity-80">{nameById(id)}</span>
+                      <span className="font-semibold">{cnt}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
