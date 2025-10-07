@@ -17,44 +17,71 @@ async function fetchJSON(url, opts) {
   return data ?? {};
 }
 
-// Компонент мини-игры для игроков
+/// Компонент мини-игры для игроков
 function FuelGameClient({ playerName, playerId }) {
   const [gameActive, setGameActive] = useState(false);
   const [gameInfo, setGameInfo] = useState(null);
   const [userGuess, setUserGuess] = useState('');
   const [guesses, setGuesses] = useState([]);
   const [message, setMessage] = useState('');
-  const [hasGuessed, setHasGuessed] = useState(false);
+  const [remainingAttempts, setRemainingAttempts] = useState(0);
+  const [usedAttempts, setUsedAttempts] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [lastCheck, setLastCheck] = useState(0);
 
   const checkGameStatus = async () => {
+    // Предотвращаем слишком частые запросы
+    const now = Date.now();
+    if (now - lastCheck < 2000) return; // Не чаще чем раз в 2 секунды
+
     try {
+      setLoading(true);
+      setLastCheck(now);
+
       const response = await fetch('/api/game/guess');
+
       if (response.ok) {
         const data = await response.json();
         setGameActive(true);
         setGameInfo(data.game);
-        setGuesses(data.guesses);
+        setGuesses(data.guesses || []);
 
-        const userGuess = data.guesses.find(g => g.playerId === playerId);
-        if (userGuess) {
-          setHasGuessed(true);
-          setMessage(`Вы уже сделали догадку: ${userGuess.guess}`);
-        }
+        // Подсчитываем попытки текущего игрока
+        const playerGuesses = data.guesses.filter(g => g.playerId === playerId);
+        setUsedAttempts(playerGuesses.length);
+        setRemainingAttempts(data.game.attempts - playerGuesses.length);
+        setMessage('');
+
       } else {
-        setGameActive(false);
-        setGameInfo(null);
+        // Если игра не активна (400 ошибка), это нормальная ситуация
+        const errorData = await response.json();
+        if (errorData.code === 'GAME_NOT_ACTIVE') {
+          setGameActive(false);
+          setGameInfo(null);
+          setGuesses([]);
+          setUsedAttempts(0);
+          setRemainingAttempts(0);
+          setMessage('');
+        } else {
+          setMessage(`Ошибка: ${errorData.error}`);
+        }
       }
     } catch (error) {
+      console.error('Error checking game status:', error);
       setGameActive(false);
+      // Не показываем ошибку соединения, это нормально
+    } finally {
+      setLoading(false);
     }
   };
 
   const submitGuess = async (e) => {
     e.preventDefault();
 
-    if (!userGuess || hasGuessed) return;
+    if (!userGuess || remainingAttempts <= 0 || !gameActive) return;
 
     try {
+      setLoading(true);
       const response = await fetch('/api/game/guess', {
         method: 'POST',
         headers: {
@@ -70,32 +97,71 @@ function FuelGameClient({ playerName, playerId }) {
       const data = await response.json();
 
       if (response.ok) {
-        setHasGuessed(true);
-        setMessage(data.guess.isCorrect ?
-          '🎉 Поздравляем! Вы угадали число!' :
-          `Ваша догадка: ${userGuess}. ${data.guess.hint === 'greater' ? 'Загаданное число БОЛЬШЕ' : 'Загаданное число МЕНЬШЕ'}`
+        setUserGuess('');
+        setMessage(
+          data.guess.isCorrect ?
+            '🎉 Поздравляем! Вы угадали число!' :
+            `Попытка ${data.guess.attemptNumber}: ${userGuess}. ${data.guess.hint === 'greater' ? 'Загаданное число БОЛЬШЕ' : 'Загаданное число МЕНЬШЕ'}`
         );
-        checkGameStatus();
+
+        setRemainingAttempts(data.remainingAttempts);
+        setUsedAttempts(data.usedAttempts);
+
+        // Обновляем список догадок через секунду
+        setTimeout(() => {
+          checkGameStatus();
+        }, 1000);
+
       } else {
         setMessage(data.error || 'Ошибка при отправке догадки');
+        // Если ошибка, перепроверяем статус игры
+        checkGameStatus();
       }
     } catch (error) {
       setMessage('Ошибка соединения');
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
+    // Первоначальная проверка статуса
     checkGameStatus();
-    const interval = setInterval(checkGameStatus, 3000);
+
+    // Интервал проверки только если игра активна
+    let interval;
+    if (gameActive) {
+      interval = setInterval(checkGameStatus, 5000); // Каждые 5 секунд если игра активна
+    } else {
+      interval = setInterval(checkGameStatus, 10000); // Каждые 10 секунд если игра не активна
+    }
+
     return () => clearInterval(interval);
-  }, [playerId]);
+  }, [gameActive, playerId]);
+
+  // Если загружается, показываем индикатор
+  if (loading && !gameActive) {
+    return (
+      <div className="p-6 bg-gray-800 rounded-lg border border-gray-700 text-center">
+        <div className="text-4xl mb-4">⛽</div>
+        <h3 className="text-xl font-bold text-green-400 mb-2">Рулетка топлива</h3>
+        <div className="flex justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-400"></div>
+        </div>
+        <p className="text-gray-400 mt-2">Проверяем статус игры...</p>
+      </div>
+    );
+  }
 
   if (!gameActive) {
     return (
       <div className="p-6 bg-gray-800 rounded-lg border border-gray-700 text-center">
         <div className="text-4xl mb-4">⛽</div>
         <h3 className="text-xl font-bold text-green-400 mb-2">Рулетка топлива</h3>
-        <p className="text-gray-400">Ожидаем запуска игры ведущим...</p>
+        <p className="text-gray-400 mb-4">Ожидаем запуска игры ведущим...</p>
+        <div className="text-xs text-gray-500 mt-2">
+          Игра будет запущена ведущим в ближайшее время
+        </div>
       </div>
     );
   }
@@ -106,16 +172,27 @@ function FuelGameClient({ playerName, playerId }) {
         <div className="text-4xl mb-2">⛽</div>
         <h3 className="text-xl font-bold text-green-400 mb-2">Рулетка топлива</h3>
         <p className="text-gray-300">Угадайте число от {gameInfo.range.min} до {gameInfo.range.max}</p>
-        <p className="text-sm text-gray-400 mt-1">
-          Попыток: {gameInfo.remainingAttempts}/{gameInfo.attempts}
-        </p>
+        <div className="flex justify-center gap-6 mt-3">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-blue-400">{usedAttempts}</div>
+            <div className="text-xs text-gray-400">Использовано</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-emerald-400">{remainingAttempts}</div>
+            <div className="text-xs text-gray-400">Осталось</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-purple-400">{gameInfo.attempts}</div>
+            <div className="text-xs text-gray-400">Всего</div>
+          </div>
+        </div>
       </div>
 
-      {!hasGuessed ? (
+      {remainingAttempts > 0 ? (
         <form onSubmit={submitGuess} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-green-300 mb-2">
-              Ваша догадка:
+              Ваша догадка (попытка {usedAttempts + 1}):
             </label>
             <input
               type="number"
@@ -126,28 +203,57 @@ function FuelGameClient({ playerName, playerId }) {
               className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-emerald-500"
               placeholder={`Введите число от ${gameInfo.range.min} до ${gameInfo.range.max}`}
               required
+              disabled={loading}
             />
           </div>
           <button
             type="submit"
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors"
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            disabled={!userGuess || loading}
           >
-            🎯 Сделать догадку
+            {loading ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                Отправка...
+              </>
+            ) : (
+              `🎯 Сделать догадку (${remainingAttempts} осталось)`
+            )}
           </button>
         </form>
       ) : (
         <div className="text-center p-4 bg-gray-700 rounded-lg">
-          <div className="text-lg font-semibold text-green-400 mb-2">
-            {message.includes('Поздравляем') ? '🎉' : '📝'} {message}
+          <div className="text-lg font-semibold text-amber-400 mb-2">
+            Вы использовали все {gameInfo.attempts} попыток!
           </div>
           <p className="text-sm text-gray-400">Ожидаем завершения игры</p>
         </div>
       )}
 
+      {message && (
+        <div className={`mt-4 p-3 rounded-lg text-center ${
+          message.includes('Поздравляем') ? 'bg-emerald-900/30 border border-emerald-500' :
+            message.includes('Ошибка') ? 'bg-red-900/30 border border-red-500' :
+              'bg-blue-900/30 border border-blue-500'
+        }`}>
+          <div className="font-semibold text-green-300">{message}</div>
+        </div>
+      )}
+
+      {/* Список догадок */}
       {guesses.length > 0 && (
         <div className="mt-6">
-          <h4 className="font-semibold text-green-300 mb-3">Догадки игроков:</h4>
-          <div className="space-y-2 max-h-40 overflow-y-auto">
+          <div className="flex justify-between items-center mb-3">
+            <h4 className="font-semibold text-green-300">Все догадки:</h4>
+            <button
+              onClick={checkGameStatus}
+              disabled={loading}
+              className="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-50"
+            >
+              {loading ? '🔄' : '🔄 Обновить'}
+            </button>
+          </div>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
             {guesses.map((guess) => (
               <div
                 key={guess.id}
@@ -158,11 +264,14 @@ function FuelGameClient({ playerName, playerId }) {
                 } ${guess.playerId === playerId ? 'ring-2 ring-blue-500' : ''}`}
               >
                 <div className="flex justify-between items-center">
-                  <span className={`font-medium ${
-                    guess.playerId === playerId ? 'text-blue-400' : 'text-gray-300'
-                  }`}>
-                    {guess.playerName} {guess.playerId === playerId && '(Вы)'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`font-medium ${
+                      guess.playerId === playerId ? 'text-blue-400' : 'text-gray-300'
+                    }`}>
+                      {guess.playerName} {guess.playerId === playerId && '(Вы)'}
+                    </span>
+                    <span className="text-xs text-gray-400">#{guess.attemptNumber}</span>
+                  </div>
                   <span className={`text-lg font-bold ${
                     guess.isCorrect ? 'text-emerald-400' : 'text-gray-400'
                   }`}>

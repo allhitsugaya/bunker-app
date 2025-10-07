@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import ScenariosGrid from '@/app/_components/user/ScenariosGrid';
 import { FuelGameClient } from '@/app/_components/admin/AdminPanel';
 
+
 // --- безопасный fetch JSON ---
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
