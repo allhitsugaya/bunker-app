@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import ScenariosGrid from '@/app/_components/user/ScenariosGrid';
+import { FuelGameClient } from '@/app/_components/admin/AdminPanel';
 
 // --- безопасный fetch JSON ---
 async function fetchJSON(url, opts) {
@@ -19,11 +20,105 @@ async function fetchJSON(url, opts) {
   return data ?? {};
 }
 
+// Компонент для отображения событий
+function EventsDisplay({ events }) {
+  if (!events || events.length === 0) return null;
+
+  const getEventColor = (severity) => {
+    switch (severity) {
+      case 'critical':
+      case 'high':
+        return 'border-red-500/50 bg-red-900/20';
+      case 'medium':
+      case 'warning':
+        return 'border-yellow-500/50 bg-yellow-900/20';
+      case 'low':
+        return 'border-blue-500/50 bg-blue-900/20';
+      default:
+        return 'border-emerald-500/50 bg-emerald-900/20';
+    }
+  };
+
+  const getEventIcon = (type) => {
+    switch (type) {
+      case 'crisis':
+        return '🔥';
+      case 'notification':
+        return '📢';
+      case 'resource_change':
+        return '📦';
+      case 'phase_change':
+        return '🔄';
+      case 'scenario_change':
+        return '🎭';
+      default:
+        return '⚡';
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-emerald-800/40 bg-gray-900 p-6">
+      <h3 className="text-xl font-bold text-green-400 mb-4 flex items-center gap-2">
+        📢 Активные события
+        <span className="text-sm text-emerald-400 bg-emerald-900/30 px-2 py-1 rounded-full">
+          {events.length}
+        </span>
+      </h3>
+
+      <div className="grid gap-3">
+        {events.map((event) => (
+          <div
+            key={event.id}
+            className={`p-4 rounded-xl border-2 ${getEventColor(event.severity)} backdrop-blur-sm transition-all duration-300`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="text-2xl flex-shrink-0">
+                {getEventIcon(event.type)}
+              </div>
+              <div className="flex-1">
+                <h4 className="font-bold text-lg text-green-300 mb-1">
+                  {event.title}
+                </h4>
+                <p className="text-green-200/90 text-sm mb-2">
+                  {event.description}
+                </p>
+                <div className="flex flex-wrap gap-4 text-xs text-green-200/60">
+                  <span>Тип: {event.type}</span>
+                  <span>Создано: {new Date(event.createdAt).toLocaleTimeString()}</span>
+                  {event.expiresAt && (
+                    <span>Истекает: {new Date(event.expiresAt).toLocaleTimeString()}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Эффекты события */}
+            {event.effects && event.effects.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-emerald-800/30">
+                <div className="flex flex-wrap gap-2">
+                  {event.effects.map((effect, index) => (
+                    <span
+                      key={index}
+                      className="px-2 py-1 rounded-full text-xs bg-gray-800/50 border border-emerald-700/30 text-green-300"
+                    >
+                      {effect}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function BunkerClient() {
   // ===== базовое состояние =====
   const [playerId, setPlayerId] = useState(null);
-  const [players, setPlayers] = useState([]);   // публичные, как видят все
-  const [me, setMe] = useState(null);           // полные статы (только для себя)
+  const [players, setPlayers] = useState([]);
+  const [me, setMe] = useState(null);
 
   // admin
   const [adminMode, setAdminMode] = useState(false);
@@ -34,6 +129,7 @@ export default function BunkerClient() {
   // раскрытие
   const FIELD_LABELS = {
     gender: 'Пол',
+    race: 'Раса',
     age: 'Возраст',
     profession: 'Профессия',
     health: 'Здоровье',
@@ -64,10 +160,13 @@ export default function BunkerClient() {
   const getOpenedKeys = (p) => ALL_KEYS.filter((k) => p[k] !== undefined && p[k] !== null);
 
   // ===== голосование =====
-  const [poll, setPoll] = useState(null);           // { id, createdAt, candidates?: string[] } | null
-  const [pollCounts, setPollCounts] = useState(null); // { [playerId]: number }
-  const [myVote, setMyVote] = useState(null);         // my current vote (targetId) | null
-  const [pollLast, setPollLast] = useState(null);     // last closed poll info (optional)
+  const [poll, setPoll] = useState(null);
+  const [pollCounts, setPollCounts] = useState(null);
+  const [myVote, setMyVote] = useState(null);
+  const [pollLast, setPollLast] = useState(null);
+
+  // ===== события =====
+  const [events, setEvents] = useState([]);
 
   const totalVotes = useMemo(
     () => (pollCounts ? Object.values(pollCounts).reduce((s, n) => s + n, 0) : 0),
@@ -134,19 +233,31 @@ export default function BunkerClient() {
     }
   };
 
+  // ===== загрузка событий =====
+  const loadEvents = async () => {
+    if (!playerId) return;
+    try {
+      const data = await fetchJSON(`/api/events?playerId=${playerId}`);
+      setEvents(data.events || []);
+    } catch (error) {
+      console.error('Ошибка загрузки событий:', error);
+      setEvents([]);
+    }
+  };
+
   // ===== поллинг обоих состояний =====
   useEffect(() => {
     const ready = playerId || (adminMode && adminKey);
     if (!ready) return;
     const tick = async () => {
-      await Promise.allSettled([load(), loadPoll()]);
+      await Promise.allSettled([load(), loadPoll(), loadEvents()]);
     };
     tick();
     const t = setInterval(tick, 2500);
     return () => clearInterval(t);
   }, [playerId, adminMode, adminKey]);
 
-  // ===== экшены: join / regenerate / reveal / hide / admin exclude =====
+  // ===== экшены =====
   const join = async () => {
     const name = prompt('Имя игрока?') || 'Игрок';
     const res = await fetchJSON('/api/join', {
@@ -172,24 +283,40 @@ export default function BunkerClient() {
   const revealSelf = async () => {
     if (!playerId) return alert('Сначала войдите / создайте персонажа');
     const fields = Object.entries(mask).filter(([, v]) => v).map(([k]) => k);
-    await fetchJSON('/api/reveal-self', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId, fields })
-    }).catch(() => {
-    });
-    await load();
+
+    if (fields.length === 0) {
+      alert('Выберите хотя бы одну характеристику для раскрытия!');
+      return;
+    }
+
+    try {
+      await fetchJSON('/api/reveal-self', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, fields })
+      });
+      await load();
+      alert(`Успешно раскрыто ${fields.length} характеристик!`);
+    } catch (error) {
+      console.error('Ошибка раскрытия:', error);
+      alert('Ошибка при раскрытии характеристик');
+    }
   };
 
   const hideSelf = async () => {
     if (!playerId) return;
-    await fetchJSON('/api/hide-self', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId })
-    }).catch(() => {
-    });
-    await load();
+    try {
+      await fetchJSON('/api/hide-self', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId })
+      });
+      await load();
+      alert('Все характеристики скрыты!');
+    } catch (error) {
+      console.error('Ошибка скрытия:', error);
+      alert('Ошибка при скрытии характеристик');
+    }
   };
 
   const regenerate = async () => {
@@ -218,7 +345,6 @@ export default function BunkerClient() {
   // ===== экшены голосования =====
   async function startPoll() {
     if (!adminKey) return alert('Нужен ключ ведущего');
-    // ВАЖНО: отправляем валидный список кандидатов (не исключённых)
     const candidates = players.filter(p => !p.excluded).map(p => p.id);
 
     if (candidates.length === 0) {
@@ -249,28 +375,106 @@ export default function BunkerClient() {
     await fetchJSON('/api/polls/close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-      body: JSON.stringify({ policy: 'most' }) // если нужно — поддержи другие политики на бэке
+      body: JSON.stringify({ policy: 'most' })
     });
     await loadPoll();
-    await load(); // на случай, если после закрытия ведущий кого-то исключит
+    await load();
   }
 
-  // ===== отрисовка =====
-  const Field = ({ k, label }) => (
-    <label className="flex items-center gap-2">
-      <input
-        type="checkbox"
-        checked={mask[k]}
-        onChange={() => setMask((m) => ({ ...m, [k]: !m[k] }))}
-      />
-      <span>{label}</span>
+  // ===== улучшенные компоненты =====
+  const CustomCheckbox = ({ checked, onChange, label, description }) => (
+    <label
+      className="flex items-start gap-3 p-3 rounded-lg border border-emerald-800/30 bg-gray-800/30 hover:bg-gray-800/50 transition-all duration-200 cursor-pointer group"
+      onClick={(e) => {
+        e.preventDefault();
+        onChange(!checked);
+      }}
+    >
+      <div className="flex items-center mt-0.5">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={() => {
+          }} // Пустой обработчик, т.к. управляем через label
+          className="hidden"
+        />
+        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-200 ${
+          checked
+            ? 'bg-emerald-500 border-emerald-500'
+            : 'bg-gray-700 border-emerald-700 group-hover:border-emerald-600'
+        }`}>
+          {checked && (
+            <svg className="w-3 h-3 text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
+      </div>
+      <div className="flex-1">
+        <div className="text-sm font-medium text-green-300">{label}</div>
+        {description && (
+          <div className="text-xs text-green-200/60 mt-1">{description}</div>
+        )}
+      </div>
     </label>
   );
 
-  const displayedPlayers = players; // публичные (включая “я” как меня видят другие)
+  const Button = ({
+                    children,
+                    onClick,
+                    variant = 'primary',
+                    size = 'medium',
+                    disabled = false,
+                    className = '',
+                    ...props
+                  }) => {
+    const baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-gray-950';
+
+    const variants = {
+      primary: 'bg-gradient-to-r from-emerald-500 to-green-500 text-gray-900 hover:from-emerald-400 hover:to-green-400 active:scale-95',
+      secondary: 'bg-gray-800 text-green-300 border border-emerald-700 hover:bg-gray-700 hover:border-emerald-600',
+      danger: 'bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-500 hover:to-orange-500',
+      ghost: 'text-green-300 hover:text-green-200 hover:bg-gray-800'
+    };
+
+    const sizes = {
+      small: 'px-3 py-1.5 text-sm',
+      medium: 'px-4 py-2 text-sm',
+      large: 'px-6 py-3 text-base'
+    };
+
+    return (
+      <button
+        className={`${baseClasses} ${variants[variant]} ${sizes[size]} ${
+          disabled ? 'opacity-50 cursor-not-allowed' : ''
+        } ${className}`}
+        onClick={onClick}
+        disabled={disabled}
+        {...props}
+      >
+        {children}
+      </button>
+    );
+  };
+
+  // Группировка характеристик по категориям
+  const FIELD_CATEGORIES = {
+    basic: ['gender', 'race', 'age', 'profession'],
+    traits: ['psychology', 'trait', 'ability'],
+    personal: ['hobby', 'fear', 'secret', 'relationship'],
+    other: ['health', 'item']
+  };
+
+  const CATEGORY_LABELS = {
+    basic: 'Основные',
+    traits: 'Черты и способности',
+    personal: 'Личное',
+    other: 'Прочее'
+  };
+
+  const displayedPlayers = players;
   const visibleCols = getVisibleCols(displayedPlayers);
 
-  // кандидаты голосования — строго из poll.candidates (если сервер их прислал), иначе — все не исключённые
   const pollCandidates = useMemo(() => {
     const byId = new Map(displayedPlayers.map((p) => [p.id, p]));
     if (poll?.candidates?.length) {
@@ -284,58 +488,145 @@ export default function BunkerClient() {
 
   const nameById = (id) => displayedPlayers.find(x => x.id === id)?.name || id;
 
+  // Подсчет выбранных характеристик
+  const selectedCount = Object.values(mask).filter(Boolean).length;
+
+  // Функция для переключения чекбокса
+  const toggleCheckbox = (key) => {
+    setMask(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
+  // Функция для выбора всех характеристик
+  const selectAll = () => {
+    setMask(prev => {
+      const allSelected = Object.values(prev).every(Boolean);
+      return Object.fromEntries(ALL_KEYS.map(k => [k, !allSelected]));
+    });
+  };
+
+
   return (
-    <div className="min-h-screen bg-gray-950 text-green-300 p-6 font-mono">
-      <div className="max-w-5xl mx-auto space-y-6">
-        {/* Панель */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={join} className="px-4 py-2 bg-green-500 text-black rounded-lg hover:bg-green-400">
-            Войти / Создать персонажа
-          </button>
+    <div className="min-h-screen bg-gray-950 text-green-300 p-4 font-mono">
+      <div className="max-w-6xl mx-auto space-y-6">
+        {/* Панель управления */}
+        <div className="flex flex-wrap items-center gap-3 p-4 rounded-2xl bg-gray-900 border border-emerald-800/40">
+          <Button onClick={join} variant="primary">
+            🎮 Войти / Создать персонажа
+          </Button>
 
-          <button onClick={regenerate} className="px-3 py-2 bg-emerald-700 text-black rounded hover:bg-emerald-600">
-            Пересоздать персонажа
-          </button>
+          <Button onClick={regenerate} variant="secondary">
+            🔄 Пересоздать персонажа
+          </Button>
 
+          <Button onClick={goBack} variant="ghost" className="ml-auto">
+            ← Назад
+          </Button>
         </div>
 
-        {/* Назад */}
-        <div>
-          <button
-            onClick={goBack}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-green-300 border border-emerald-700 rounded-lg transition-colors"
-          >
-            ← Вернуться назад
-          </button>
+        {/* Админ панель */}
+        <div className="rounded-2xl border border-emerald-800/40 p-4 bg-gray-900">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="password"
+              placeholder="Ключ ведущего"
+              value={adminKeyInput}
+              onChange={(e) => setAdminKeyInput(e.target.value)}
+              className="px-3 py-2 bg-gray-800 border border-emerald-700 rounded-lg text-green-300 placeholder-green-700 focus:outline-none focus:border-emerald-500"
+            />
+            <Button onClick={applyAdminKey} variant="secondary" size="small">
+              {adminMode ? '🔓 Ведущий' : '🔒 Стать ведущим'}
+            </Button>
+            {adminError && (
+              <span className="text-red-400 text-sm px-3 py-1 bg-red-900/30 rounded-lg">
+                {adminError}
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Панель раскрытия + Мои полные */}
+        {/* Отображение событий */}
+        <EventsDisplay events={events} />
+
+        {/* Панель раскрытия характеристик */}
         {playerId && (
-          <div className="rounded-xl border border-emerald-800/40 p-4 bg-gray-900">
-            <div className="text-sm opacity-70 mb-3">
-              playerId: <span className="text-green-400">{playerId}</span>
+          <div className="rounded-2xl border border-emerald-800/40 p-6 bg-gray-900">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+              <div>
+                <h4 className="font-bold text-lg text-green-400 mb-1">Управление раскрытием</h4>
+                <div className="text-sm text-green-200/60">
+                  playerId: <span className="text-green-400 font-mono">{playerId}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-sm text-emerald-400 bg-emerald-900/30 px-3 py-1 rounded-full">
+                  Выбрано: {selectedCount} / {ALL_KEYS.length}
+                </div>
+                <Button onClick={selectAll} variant="ghost" size="small">
+                  {selectedCount === ALL_KEYS.length ? '❌ Снять все' : '✅ Выбрать все'}
+                </Button>
+              </div>
             </div>
-            <h4 className="font-bold mb-2">Что показать другим:</h4>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-              {ALL_KEYS.map((k) => (
-                <Field key={k} k={k} label={FIELD_LABELS[k]} />
+
+            {/* Категории характеристик */}
+            <div className="space-y-4">
+              {Object.entries(FIELD_CATEGORIES).map(([category, fields]) => (
+                <div key={category}>
+                  <h5 className="text-sm font-semibold text-green-300 mb-2 uppercase tracking-wide">
+                    {CATEGORY_LABELS[category]}
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {fields.map((k) => (
+                      <CustomCheckbox
+                        key={k}
+                        checked={mask[k]}
+                        onChange={() => toggleCheckbox(k)}
+                        label={FIELD_LABELS[k]}
+                      />
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
-            <div className="mt-3 flex gap-2">
-              <button onClick={revealSelf} className="px-3 py-2 bg-green-500 text-black rounded hover:bg-green-400">
-                Открыть выбранное
-              </button>
+
+            <div className="flex flex-col sm:flex-row gap-3 mt-6 pt-4 border-t border-emerald-800/30">
+              <Button
+                onClick={revealSelf}
+                variant="primary"
+                disabled={selectedCount === 0}
+                className="flex-1"
+              >
+                👁 Открыть выбранное ({selectedCount})
+              </Button>
+              <Button
+                onClick={hideSelf}
+                variant="secondary"
+                className="flex-1"
+              >
+                🕶 Скрыть все
+              </Button>
             </div>
 
+            {/* Мои полные характеристики */}
             {me && (
-              <div className="mt-4 p-3 rounded-lg bg-gray-900 border border-emerald-800/40">
-                <div className="text-sm font-semibold text-green-300 mb-2">Твои характеристики (полные, видишь только
-                  ты)
+              <div className="mt-6 p-4 rounded-xl bg-gray-800/30 border border-emerald-800/30">
+                <div className="text-sm font-semibold text-green-300 mb-3 flex items-center gap-2">
+                  <span>🌟 Твои полные характеристики</span>
+                  <span className="text-xs text-emerald-400 bg-emerald-900/30 px-2 py-1 rounded">
+                    Видишь только ты
+                  </span>
                 </div>
-                <div className="grid md:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {ALL_KEYS.map((k) => (
-                    <div key={`me-${k}`}>
-                      {FIELD_LABELS[k]}: <span className="text-green-200">{me[k] ?? '—'}</span>
+                    <div key={`me-${k}`} className="text-sm">
+                      <div className="text-green-200/60 text-xs uppercase tracking-wide">
+                        {FIELD_LABELS[k]}
+                      </div>
+                      <div className="text-green-200 font-medium mt-1">
+                        {me[k] ?? <span className="text-gray-500">—</span>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -344,21 +635,30 @@ export default function BunkerClient() {
           </div>
         )}
 
-        {adminError && <div className="text-red-400 text-sm">{adminError}</div>}
+        {/* Таблица игроков */}
+        <div className="rounded-2xl border border-emerald-800/40 p-6 bg-gray-900">
+          <h3 className="text-xl font-bold text-green-400 mb-4 flex items-center gap-3">
+            📋 Игроки
+            <span className="text-sm text-green-200/60 font-normal">
+              {displayedPlayers.length} участников
+            </span>
+          </h3>
 
-        {/* Таблица игроков (публичные) */}
-        <div className="mt-8">
-          <h3 className="text-xl font-bold text-green-400 mb-3">📋 Данные игроков</h3>
           {displayedPlayers.length === 0 || visibleCols.length === 0 ? (
-            <div className="text-gray-400">Пока никто ничего не открыл.</div>
+            <div className="text-center py-8 text-gray-400">
+              <div className="text-4xl mb-2">👥</div>
+              Пока никто ничего не открыл.
+            </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-emerald-800/40">
-              <table className="min-w-full text-sm bg-gray-900">
+            <div className="overflow-x-auto rounded-xl border border-emerald-800/30">
+              <table className="min-w-full text-sm bg-gray-800/20">
                 <thead className="bg-gray-800/60">
                 <tr className="text-left">
-                  <th className="px-4 py-3 border-b border-emerald-800/40">Имя</th>
+                  <th className="px-4 py-3 border-b border-emerald-800/40 font-semibold text-green-300">
+                    Игрок
+                  </th>
                   {visibleCols.map((k) => (
-                    <th key={k} className="px-4 py-3 border-b border-emerald-800/40">
+                    <th key={k} className="px-4 py-3 border-b border-emerald-800/40 font-semibold text-green-300">
                       {FIELD_LABELS[k]}
                     </th>
                   ))}
@@ -366,15 +666,25 @@ export default function BunkerClient() {
                 </thead>
                 <tbody>
                 {displayedPlayers.map((p) => (
-                  <tr key={p.id} className="odd:bg-gray-900 even:bg-gray-900/60">
-                    <td className="px-4 py-3 border-b border-emerald-900/30 font-semibold text-green-300">
-                      {p.name}
-                      {p.id === playerId && <span className="ml-2 text-xs text-emerald-400">(ты)</span>}
-                      {p.excluded && <span className="ml-2 text-xs text-red-400">[ИСКЛЮЧЁН]</span>}
+                  <tr key={p.id} className="border-b border-emerald-900/20 hover:bg-gray-800/30 transition-colors">
+                    <td className="px-4 py-3 font-semibold">
+                      <div className="flex items-center gap-2">
+                        <span className="text-green-300">{p.name}</span>
+                        {p.id === playerId && (
+                          <span className="text-xs bg-emerald-500 text-gray-900 px-2 py-1 rounded-full">
+                            вы
+                          </span>
+                        )}
+                        {p.excluded && (
+                          <span className="text-xs bg-red-500 text-white px-2 py-1 rounded-full">
+                            исключён
+                          </span>
+                        )}
+                      </div>
                     </td>
                     {visibleCols.map((k) => (
-                      <td key={k} className="px-4 py-3 border-b border-emerald-900/30">
-                        {p[k] ?? <span className="opacity-40">—</span>}
+                      <td key={k} className="px-4 py-3 text-green-200">
+                        {p[k] ?? <span className="text-gray-500">—</span>}
                       </td>
                     ))}
                   </tr>
@@ -385,153 +695,172 @@ export default function BunkerClient() {
           )}
         </div>
 
-        {/* Открытые характеристики (скролл) */}
-        <div className="mt-6">
-          <h4 className="text-lg font-bold text-green-400 mb-2">Открытые характеристики</h4>
-          <div className="grid gap-3">
-            {displayedPlayers.map((p) => {
-              const opened = getOpenedKeys(p);
-              return (
-                <div key={p.id} className="p-3 rounded-lg bg-gray-900 border border-emerald-800/40">
-                  <div className="text-sm mb-2 font-semibold text-green-300">
-                    {p.name}
-                    {p.id === playerId && <span className="ml-2 text-xs text-emerald-400">(ты)</span>}
-                    {p.excluded && <span className="ml-2 text-xs text-red-400">[ИСКЛЮЧЁН]</span>}
-                  </div>
-                  {opened.length === 0 ? (
-                    <div className="text-gray-400 text-sm">Ничего не открыто.</div>
-                  ) : (
-                    <div className="max-h-48 overflow-y-auto pr-1">
-                      <div className="flex flex-wrap gap-2">
-                        {opened.map((k) => (
-                          <span
-                            key={k}
-                            className="px-2 py-1 rounded-full text-xs bg-emerald-700/30 border border-emerald-700/60"
-                          >
-                            {FIELD_LABELS[k]}: <span className="text-green-200">{String(p[k])}</span>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
 
-        {/* ===== Голосование ===== */}
-        <div className="mt-8 rounded-2xl border border-emerald-800/40 bg-gray-900 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-xl font-bold text-green-400">🗳 Голосование</h3>
-            <div className="flex items-center gap-2">
+        {/* Блок голосования */}
+        <div className="rounded-2xl border border-emerald-800/40 bg-gray-900 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-bold text-green-400 flex items-center gap-2">
+              🗳 Голосование
+              {poll && (
+                <span className="text-sm text-emerald-400 bg-emerald-900/30 px-2 py-1 rounded-full animate-pulse">
+                  Активно
+                </span>
+              )}
+            </h3>
+
+            <div className="flex items-center gap-3">
               {!poll ? (
                 <>
-                  <span className="text-sm text-green-200/70">Нет активного голосования</span>
+                  <span className="text-sm text-green-200/60">Голосование не запущено</span>
                   {adminKey && (
-                    <button
-                      onClick={startPoll}
-                      className="px-3 py-2 bg-emerald-600 text-black rounded hover:bg-emerald-500"
-                    >
-                      Запустить
-                    </button>
+                    <Button onClick={startPoll} variant="primary" size="small">
+                      🚀 Запустить
+                    </Button>
                   )}
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-green-200/70">
-                    Активно с: {new Date(poll.createdAt).toLocaleTimeString()}
+                  <span className="text-sm text-green-200/60">
+                    Начато: {new Date(poll.createdAt).toLocaleTimeString()}
                   </span>
                   {adminKey && (
-                    <button
-                      onClick={closePoll}
-                      className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-500"
-                    >
-                      Закрыть
-                    </button>
+                    <Button onClick={closePoll} variant="danger" size="small">
+                      ⏹ Завершить
+                    </Button>
                   )}
                 </>
               )}
             </div>
           </div>
 
-          {/* Активное голосование */}
           {poll && (
-            <div className="grid md:grid-cols-2 gap-4">
-              {/* Кандидаты / голос */}
-              <div className="rounded-xl border border-emerald-800/30 bg-gray-900/70 p-3">
-                <div className="text-sm font-semibold text-green-300 mb-2">Кандидаты</div>
+            <div className="grid lg:grid-cols-2 gap-6">
+              {/* Кандидаты */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-green-300 text-lg">Кандидаты</h4>
                 {pollCandidates.length === 0 ? (
-                  <div className="text-gray-400 text-sm">Нет доступных кандидатов.</div>
+                  <div className="text-center py-8 text-gray-400">
+                    Нет доступных кандидатов.
+                  </div>
                 ) : (
-                  <div className="grid gap-2">
-                    {pollCandidates.map((p) => {
-                      const votes = pollCounts?.[p.id] ?? 0;
-                      const pct = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
-                      const isMine = myVote === p.id;
-                      return (
-                        <div
-                          key={p.id}
-                          className={`rounded-lg border px-3 py-2 ${
-                            isMine ? 'border-emerald-500 bg-emerald-900/20' : 'border-emerald-800/30 bg-gray-900'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="font-semibold text-green-300">
-                              {p.name} {p.id === playerId && <span className="text-emerald-400 text-xs">(ты)</span>}
-                              {p.excluded && <span className="ml-2 text-red-400 text-xs">[ИСКЛЮЧЁН]</span>}
+                  pollCandidates.map((p) => {
+                    const votes = pollCounts?.[p.id] ?? 0;
+                    const pct = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
+                    const isMine = myVote === p.id;
+
+                    return (
+                      <div
+                        key={p.id}
+                        className={`p-4 rounded-xl border-2 transition-all duration-200 ${
+                          isMine
+                            ? 'border-emerald-500 bg-emerald-900/20 shadow-lg shadow-emerald-500/20'
+                            : 'border-emerald-800/30 bg-gray-800/30 hover:border-emerald-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="font-semibold text-green-300 text-lg">
+                              {p.name}
                             </div>
-                            <button
-                              onClick={() => castVote(p.id)}
-                              className="px-2 py-1 text-xs bg-emerald-600 text-black rounded hover:bg-emerald-500"
-                            >
-                              Голосовать
-                            </button>
+                            {p.id === playerId && (
+                              <span className="text-xs bg-emerald-500 text-gray-900 px-2 py-1 rounded-full">
+                                вы
+                              </span>
+                            )}
                           </div>
-                          <div className="mt-2 text-xs text-green-200/80">
-                            Голоса: {votes} {totalVotes > 0 && `(${pct}%)`}
+                          <Button
+                            onClick={() => castVote(p.id)}
+                            variant={isMine ? 'primary' : 'secondary'}
+                            size="small"
+                          >
+                            {isMine ? '✅ Ваш выбор' : '🗳 Голосовать'}
+                          </Button>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm text-green-200/80">
+                            <span>Голоса: {votes}</span>
+                            <span className="font-semibold">{pct}%</span>
                           </div>
-                          <div className="mt-1 h-1.5 w-full bg-gray-800 rounded">
-                            <div className="h-1.5 bg-emerald-500 rounded" style={{ width: `${pct}%` }} />
+                          <div className="w-full bg-gray-700 rounded-full h-2.5">
+                            <div
+                              className="bg-gradient-to-r from-emerald-400 to-green-400 h-2.5 rounded-full transition-all duration-500"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Статистика */}
+              <div className="space-y-4">
+                <h4 className="font-semibold text-green-300 text-lg">Статистика</h4>
+
+                <div className="p-4 rounded-xl bg-gray-800/30 border border-emerald-800/30">
+                  <div className="text-2xl font-bold text-green-400 text-center mb-2">
+                    {totalVotes}
+                  </div>
+                  <div className="text-center text-green-200/60 text-sm">
+                    всего голосов
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h5 className="font-medium text-green-300">Распределение голосов:</h5>
+                  {Object.entries(pollCounts || {})
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([id, cnt]) => {
+                      const pct = totalVotes > 0 ? Math.round((cnt / totalVotes) * 100) : 0;
+                      return (
+                        <div key={id} className="flex items-center justify-between text-sm">
+                          <span className="text-green-200/80 truncate flex-1">
+                            {nameById(id)}
+                          </span>
+                          <div className="flex items-center gap-3 ml-4">
+                            <span className="text-green-300 font-semibold w-8 text-right">
+                              {cnt}
+                            </span>
+                            <div className="w-20 bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-emerald-500 h-2 rounded-full"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-green-200/60 w-8 text-right">
+                              {pct}%
+                            </span>
                           </div>
                         </div>
                       );
                     })}
-                  </div>
-                )}
-                {myVote && (
-                  <div className="mt-3 text-xs text-emerald-300">
-                    Твой голос: <span className="font-semibold">{nameById(myVote)}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Сводка */}
-              <div className="rounded-xl border border-emerald-800/30 bg-gray-900/70 p-3">
-                <div className="text-sm font-semibold text-green-300 mb-2">Сводка</div>
-                <div className="text-sm text-green-200/80">Всего голосов: {totalVotes}</div>
-                <div className="mt-2 grid gap-1 text-xs">
-                  {Object.entries(pollCounts || {}).map(([id, cnt]) => (
-                    <div key={id} className="flex justify-between">
-                      <span className="opacity-80">{nameById(id)}</span>
-                      <span className="font-semibold">{cnt}</span>
-                    </div>
-                  ))}
                 </div>
+
+                {myVote && (
+                  <div className="p-3 rounded-lg bg-emerald-900/20 border border-emerald-500/30">
+                    <div className="text-sm text-green-300">
+                      <span className="opacity-80">Ваш голос: </span>
+                      <span className="font-semibold">{nameById(myVote)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* Последний результат (если нужен) */}
           {!poll && pollLast && (
-            <div className="mt-3 text-sm text-green-200/80">
-              Последний результат: {pollLast.summary || '—'}
+            <div className="mt-4 p-4 rounded-xl bg-gray-800/30 border border-emerald-800/30">
+              <h4 className="font-semibold text-green-300 mb-2">Последние результаты</h4>
+              <div className="text-green-200/80">{pollLast.summary || '—'}</div>
             </div>
           )}
         </div>
       </div>
 
-      {/* карточки сценариев на главной */}
+      {/* Карточки сценариев */}
+      <FuelGameClient />
       <ScenariosGrid />
     </div>
   );

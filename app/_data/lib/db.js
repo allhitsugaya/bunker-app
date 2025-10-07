@@ -25,6 +25,7 @@ async function getDb() {
   const players = db.collection('players');
   const polls = db.collection('polls');
   const votes = db.collection('votes');
+  const events = db.collection('events'); // Новая коллекция
 
   await Promise.allSettled([
     // players
@@ -38,13 +39,25 @@ async function getDb() {
     polls.createIndex({ closedAt: 1 }),
     // votes
     votes.createIndex({ pollId: 1, voterId: 1 }, { unique: true }),
-    votes.createIndex({ pollId: 1, targetId: 1 })
+    votes.createIndex({ pollId: 1, targetId: 1 }),
+    // events - новые индексы
+    events.createIndex({ createdAt: 1 }),
+    events.createIndex({ expiresAt: 1 }),
+    events.createIndex({ isActive: 1 }),
+    events.createIndex({ target: 1, targetId: 1 }),
+    events.createIndex({ id: 1 }, { unique: true })
   ]);
 
   return db;
 }
 
 const cuid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+// Вспомогательная функция для работы с коллекцией событий
+async function getEventsCollection() {
+  const db = await getDb();
+  return db.collection('events');
+}
 
 export const dbApi = {
   // ===== players =====
@@ -55,6 +68,7 @@ export const dbApi = {
       id,
       name: data.name || 'Игрок',
       gender: data.gender ?? null,
+      race: data.race ?? null,
       age: data.age ?? null,
       profession: data.profession ?? null,
       health: data.health ?? null,
@@ -147,6 +161,7 @@ export const dbApi = {
         $set: {
           name: data.name,
           gender: data.gender,
+          race: data.race,
           age: data.age,
           profession: data.profession,
           health: data.health,
@@ -178,7 +193,8 @@ export const dbApi = {
     await Promise.all([
       db.collection('players').deleteMany({}),
       db.collection('polls').deleteMany({}),
-      db.collection('votes').deleteMany({})
+      db.collection('votes').deleteMany({}),
+      db.collection('events').deleteMany({}) // Очищаем и события
     ]);
   },
 
@@ -331,5 +347,66 @@ export const dbApi = {
     );
 
     return { id: poll.id, winners, summary };
+  },
+
+  // ===== events =====
+  async createEvent(event) {
+    const coll = await getEventsCollection();
+    await coll.insertOne(event);
+  },
+
+  async getActiveEvents() {
+    const coll = await getEventsCollection();
+    const now = new Date().toISOString();
+    return coll
+      .find({
+        isActive: true,
+        expiresAt: { $gt: now }
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+  },
+
+  async getEventsByPlayer(playerId) {
+    const coll = await getEventsCollection();
+    const now = new Date().toISOString();
+    return coll
+      .find({
+        isActive: true,
+        expiresAt: { $gt: now },
+        $or: [
+          { target: 'all' },
+          { target: 'player', targetId: playerId }
+        ]
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+  },
+
+  async completeEvent(eventId) {
+    const coll = await getEventsCollection();
+    await coll.updateOne(
+      { id: eventId },
+      { $set: { isActive: false, completedAt: new Date().toISOString() } }
+    );
+  },
+
+  async cleanupExpiredEvents() {
+    const coll = await getEventsCollection();
+    const now = new Date().toISOString();
+    await coll.updateMany(
+      { expiresAt: { $lt: now }, isActive: true },
+      { $set: { isActive: false } }
+    );
+  },
+
+  async deleteEvent(eventId) {
+    const coll = await getEventsCollection();
+    await coll.deleteOne({ id: eventId });
+  },
+
+  async wipeEvents() {
+    const coll = await getEventsCollection();
+    await coll.deleteMany({});
   }
 };
