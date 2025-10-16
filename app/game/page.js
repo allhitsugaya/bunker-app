@@ -1,10 +1,10 @@
 import React from 'react';
-import BunkerClient from '@/app/_components/user/funcRandomUser';
+import GamePage from '@/app/_components/user/game/GamePage';
 
 function Page() {
   return (
     <div>
-      <BunkerClient />
+      <GamePage />
     </div>
   );
 }
