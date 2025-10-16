@@ -54,7 +54,7 @@ export default function Main() {
           </Link>
 
           <Link
-            href="/join"
+            href="/game"
             className="group block w-full bg-gray-800/80 hover:bg-gray-700/80
                        text-green-300 text-lg font-bold py-4 px-8 rounded-xl text-center transition-all duration-300
                        transform hover:scale-102 hover:shadow-lg hover:shadow-green-500/10
